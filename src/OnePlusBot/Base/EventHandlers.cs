@@ -39,6 +39,8 @@ namespace OnePlusBot.Base
             _bot.MessageReceived += OnMessageReceived;
             _bot.MessageDeleted += OnMessageRemoved;
             _bot.MessageUpdated += OnMessageUpdated;
+
+            _bot.GuildMemberUpdated += OnUserStateUpdated;
             _bot.UserBanned += OnUserBanned;
             _bot.UserUnbanned += OnUserUnbanned;
             _bot.UserVoiceStateUpdated += UserChangedVoiceState;
@@ -126,6 +128,24 @@ namespace OnePlusBot.Base
                     .WithIsInline(true)));
         }
 
+        private static async Task OnUserStateUpdated(SocketGuildUser before, SocketGuildUser after)
+        {
+            await CheckAndReportProfanity(after.Activity.Type, after);
+        }
+
+        private static async Task CheckAndReportProfanity(string text, IUser user, SocketMessage message=null){
+            var profanityChecks = Global.ProfanityChecks;
+            var lowerMessage = text.ToLower();
+            foreach (var regexObj in profanityChecks)
+            {
+                if(regexObj.Match(lowerMessage).Success)
+                {
+                    await ReportProfanity(text, user, message);
+                    break;
+                }
+            }
+        }
+
         private async Task OnMessageUpdated(Cacheable<IMessage, ulong> cacheable, SocketMessage message, ISocketMessageChannel socketChannel)
         {
             var before = await cacheable.GetOrDownloadAsync();
@@ -145,16 +165,7 @@ namespace OnePlusBot.Base
             var fullChannel = Extensions.GetChannelById(message.Channel.Id);
             if(fullChannel != null){
                 if(!fullChannel.ProfanityCheckExempt){
-                    var profanityChecks = Global.ProfanityChecks;
-                    var lowerMessage = message.Content.ToLower();
-                    foreach (var regexObj in profanityChecks)
-                    {
-                        if(regexObj.Match(lowerMessage).Success)
-                        {
-                            await ReportProfanity(message);
-                            break;
-                        }
-                    }
+                    await CheckAndReportProfanity(message.Content, message.Author, message);
                 }
             }
 
@@ -510,25 +521,26 @@ namespace OnePlusBot.Base
             await message.DeleteAsync();
         }
 
-        private static async Task ReportProfanity(SocketMessage message){
+        private static async Task ReportProfanity(string text, IUser user, SocketMessage message=null){
 
             var guild = Global.Bot.GetGuild(Global.ServerID);
             var builder = new EmbedBuilder();
             builder.Title = "Profanity has been used!";
             builder.Color = Color.DarkBlue;
             
-            builder.Timestamp = message.Timestamp;
+            builder.Timestamp = message != null ? message.Timestamp : DateTime.Now;
             
-            builder.ThumbnailUrl = message.Author.GetAvatarUrl();
+            if(message != null)
+            {
+                var link = Extensions.GetMessageUrl(guild.Id, message.Channel.Id, message.Id, "#" + message.Channel.Name);
+                var linkField = new EmbedFieldBuilder().WithName("Location of the profane message").WithValue( link);
+                builder.AddField(linkField);
+            }
 
-            const string discordUrl = "https://discordapp.com/channels/{0}/{1}/{2}";
-            builder.AddField("User in question ", Extensions.FormatMentionDetailed(message.Author))
-                .AddField(
-                    "Location of the profane message",
-                    $"[#{message.Channel.Name}]({string.Format(discordUrl, guild.Id, message.Channel.Id, message.Id)})")
-                .AddField("Message content", message.Content);
-
-
+            builder.ThumbnailUrl = user.GetAvatarUrl();
+           
+            builder.AddField("User in question ", Extensions.FormatMentionDetailed(user))
+                .AddField("Message content", text);
             var embed = builder.Build();
             var modQueue = guild.GetTextChannel(Global.Channels["modqueue"]);;
 
@@ -573,16 +585,7 @@ namespace OnePlusBot.Base
             var channel = Extensions.GetChannelById(message.Channel.Id);
             if(channel != null){
                 if(!channel.ProfanityCheckExempt){
-                    var profanityChecks = Global.ProfanityChecks;
-                    var lowerMessage = message.Content.ToLower();
-                    foreach (var regexObj in profanityChecks)
-                    {
-                        if(regexObj.Match(lowerMessage).Success)
-                        {
-                            await ReportProfanity(message);
-                            break;
-                        }
-                    }
+                    await CheckAndReportProfanity(message.Content, message.Author, message);
                 }
             }
 
